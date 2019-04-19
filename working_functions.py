@@ -98,7 +98,7 @@ class relative_fly(object): #Should be given two fly objects, and calculate rela
         self.speed = np.insert(self.speed, 0,0)
 
         
-class relative_set(object): #Givne a list of fly_data objects, calculates and outputs the relative_fly of every fly to the others.
+class relative_set(object): #Given a list of fly_data objects, calculates and outputs the relative_fly of every fly to the others.
     def __init__(self, flystack):
         pos_stack = np.empty([1,2])
         dist_stack = np.empty([])
