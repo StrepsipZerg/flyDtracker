@@ -4,6 +4,8 @@ classes & functions currently defined in the working_functions .py file :
   -fly_data class ; is called by get_ori to order info output
   
   -relative_fly class ; is used to compute relative information between 2 flies
+
+  -relative_set class ; given a list of fly_data objects, calculates the relative_fly of every fly to the others.
   
   -get_ori function ; gets raw orientations and directions from numpy array of positions and video file.
   
@@ -21,3 +23,4 @@ classes & functions currently defined in the working_functions .py file :
   
   -get_ori_pickle function ; load pickle for a certain session
   
+
