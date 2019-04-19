@@ -1,5 +1,6 @@
 # FlyDtracker
 classes & functions currently defined in the working_functions .py file :
+
   -fly_data class ; is called by get_ori to order info output
   
   -relative_fly class ; is used to compute relative information between 2 flies
