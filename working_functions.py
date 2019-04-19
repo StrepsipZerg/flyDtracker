@@ -11,6 +11,8 @@ import os
 import cv2
 import operator
 import numpy.ma as ma
+import time
+import pickle as pkl
 
 ##Classes
 class fly_data(object):
@@ -21,6 +23,11 @@ class fly_data(object):
         self.identity = identity
         self.directions = data_dict['directions'][:,identity]
         self.orientations = data_dict['orientations'][:,identity]
+        
+    def __str__(self):
+        print(self, 'is a fly_data object')
+        print('Number of frames : ', self.length)
+        print('Identity in the video : ',self.identity)
 
         
     def ori_correc(self, overwrite=False): #Outputs corrected orientations based on inputted directions.
@@ -90,20 +97,45 @@ class relative_fly(object): #Should be given two fly objects, and calculate rela
         self.speed = self.dist[1:] - self.dist[:-1]
         self.speed = np.insert(self.speed, 0,0)
 
+        
+class relative_set(object): #Givne a list of fly_data objects, calculates and outputs the relative_fly of every fly to the others.
+    def __init__(self, flystack):
+        pos_stack = np.empty([1,2])
+        dist_stack = np.empty([])
+        angle_stack = np.empty([])
+        
+        for focus in flystack:
+            for fly in flystack:
+                if focus != fly:
+                    rel = relative_fly(focus, fly)
+                    angle = np.radians(rel.angle)
+                    ys = rel.dist*np.sin(angle)
+                    xs = rel.dist*np.cos(angle)
+                    pos = np.column_stack([xs,ys])
+                    pos_stack = np.vstack([pos_stack, pos])
+                    dist_stack = np.hstack([dist_stack, rel.dist])
+                    angle_stack = np.hstack([angle_stack, rel.angle])
+        pos_stack = pos_stack[1:,]            
+        self.positions = pos_stack
+        self.dist = dist_stack
+        self.orientations = angle_stack
+
 
 #Functions
-def get_ori(Dir, video, traj): #Gets raw orientations and directions from numpy array of positions and video file.
+
+def get_ori(Dir, video, traj, thresh = 50, noise_thresh=0.5): #Gets raw orientations and directions from numpy array of positions and video file.
     #Both .npy file and video file should be in the same Dir folder.
     
     #Fantastic files and where to find them
     path_to_vid = r'{}{}{}'.format(Dir, os.sep, video)
     path_to_traj = r'{}{}{}'.format(Dir, os.sep, traj)
     cap = cv2.VideoCapture(path_to_vid)
-    
+
     trajectories_dict = np.load(path_to_traj, encoding='latin1').item() #Trajectorie data from idtrackerai.
     trajectories = trajectories_dict['trajectories']
-    nberflies = len(trajectories_dict['trajectories'][0]) #Get number of individuals from trajectories
     
+    #Some information that will be useful later
+    nberflies = len(trajectories_dict['trajectories'][0]) #Get number of individuals from trajectories
     framerate = cap.get(cv2.CAP_PROP_FPS)
     
     i = 0 #Index for taking the right trajectories.
@@ -120,8 +152,7 @@ def get_ori(Dir, video, traj): #Gets raw orientations and directions from numpy 
             cap.release()
             continue
 
-    #Set the threshold and get the binary image
-        thresh = 50        
+    #Set the threshold and get the binary image        
         ret, diff_img = cv2.threshold(img,thresh,255,cv2.THRESH_BINARY)
 
                 #Get a bunch of contours from the binary
@@ -168,9 +199,9 @@ def get_ori(Dir, video, traj): #Gets raw orientations and directions from numpy 
             direc_stack = np.zeros_like(shape_pos)
             speed_stack = np.zeros_like(shape_pos)
             dist_stack = np.zeros_like(shape_pos)
-            direc = (0,0,0,0,0)
+            direc = np.zeros_like(shape_pos)
         elif isinstance(i, int): #If not the first iteration
-            dist, direc = get_angle(trajectories, i, direc,1)
+            dist, direc = get_angle(trajectories, i, direc, noise_thresh)
             speed = dist*framerate
 
             dist_stack = np.vstack([dist_stack, dist]) # distance traveled in pixels            
@@ -274,3 +305,30 @@ def angleFromPoints(x,y): #Gets two arrays of x/y distances between two points
         elif y[i] <0:
             angle[i] =360 - angle[i]
     return dist, angle
+
+
+#Handling the data in a "packaged" way
+
+def save_ori_pickle(session_name):
+    Dir = "/home/maubry/python/idtrackerai/raw"
+    st = time.time()
+    video = session_name+".avi"
+    traj = session_name+".npy"
+    pkl_name = session_name+"_ori_data.pkl"
+
+    flystack = get_ori(Dir, video, traj)
+    f = open(pkl_name, "wb")
+    pkl.dump(flystack, f)
+    laps = time.time() - st
+    print('time elapsed : {}min and {}sec'.format(laps//60, int(laps%60)))
+
+    
+def get_ori_pickle(session_name):
+    pkl_name = session_name+"_ori_data.pkl"
+    f = open(pkl_name, "rb")
+    random_stack = pkl.load(f)
+    return random_stack
+    
+    
+    
+    
