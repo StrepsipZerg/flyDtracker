@@ -13,6 +13,8 @@ import operator
 import numpy.ma as ma
 import time
 import pickle as pkl
+import matplotlib.pyplot as plt
+
 
 ##Classes
 class fly_data(object):
@@ -329,7 +331,7 @@ def get_ori_pickle(session_name):
     return random_stack
     
     
-def polar_histogram(flystack, distance=True, force_bin=72): #Visual rendering of a relative_fly set (angle and distance)
+def polar_histogram(flystack, distance=True, force_bin=72, dist_range=500): #Visual rendering of a relative_fly set (angle and distance)
     
     rel_set = relative_set(flystack)
     
@@ -342,7 +344,7 @@ def polar_histogram(flystack, distance=True, force_bin=72): #Visual rendering of
         num_bins_theta = force_bin
         
     # Create polar edges
-    r_edges = np.linspace(0, 500, num_bins_r + 1) 
+    r_edges = np.linspace(0, dist_range, num_bins_r + 1) 
     theta_edges = np.linspace(0, 2*np.pi, num_bins_theta + 1)
 
     # Transform cartesian to polar coordinates
