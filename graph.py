@@ -1,3 +1,7 @@
+#Functions to graphically visualize data.
+#Currently only polar_histogram is implemented.
+#Better legend should be added.
+#The mean and standard deviation look odd, and are probably not very useful considering our data.
 import numpy as np
 import matplotlib.pyplot as plt
 from working_functions import *
@@ -79,3 +83,5 @@ def polar_histogram(flystack, distance=True, #if distance is false, will plot an
     plt.axvline(theta_mean, color="red", linewidth=3)
     plt.axvline(theta_mean-theta_std, color="red", linestyle=":", linewidth=2)
     plt.axvline(theta_mean+theta_std, color="red", linestyle=":", linewidth=2)
+
+
