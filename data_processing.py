@@ -326,5 +326,5 @@ def save_ori_pickle(session_name, Dir = "/home/maubry/python/idtrackerai/raw"):
 def get_ori_pickle(session_name):
     pkl_name = session_name+"_ori_data.pkl"
     f = open(pkl_name, "rb")
-    random_stack = pkl.load(f)
-    return random_stack
+    flystack = pkl.load(f)
+    return flystack
