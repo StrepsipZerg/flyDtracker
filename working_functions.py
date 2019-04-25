@@ -16,16 +16,20 @@ import pickle as pkl
 import matplotlib.pyplot as plt
 
 
+#
+### Classes
+#
 
-##Classes
 class fly_data(object):
     """fly_data gathers the position and orientation of a given fly all along the video."""
+    #NB : fly_data is used to store the ouput of the get_ori function. It will usually not be useful to call it directly.
     def __init__(self, data_dict, identity):
         self.length = len(data_dict['orientations'][...,identity])
         self.positions = data_dict['trajectories'][:,identity] #The position of the fly for each frame in pixels of the video.
         self.identity = identity
         self.directions = data_dict['directions'][:,identity]
         self.orientations = data_dict['orientations'][:,identity]
+        self.speeds = data_dict['speeds'][:,identity]
         
     def ori_correc(self, overwrite=False): #Outputs corrected orientations based on inputted directions.
         #Should be given two arrays of numbers
@@ -90,9 +94,14 @@ class relative_fly(object): #Should be given two fly objects, and calculate rela
         self.dist, absol_angle = angleFromPoints(xs,ys)
         angle = absol_angle - focusfly.orientations
         angle[angle < 0] += 360
+        
+        ori_rel = newfly.orientations - (absol_angle - 180)
+        ori_rel[ori_rel < 0] += 360
+        self.ori_rel = ori_rel
         self.angle = angle
         self.speed = self.dist[1:] - self.dist[:-1]
         self.speed = np.insert(self.speed, 0,0)
+        self.size = 10+20*np.absolute(np.sin(self.ori_rel))
 
         
 class relative_set(object): #Given a list of fly_data objects, calculates and outputs the relative_fly of every fly to the others.
@@ -117,8 +126,9 @@ class relative_set(object): #Given a list of fly_data objects, calculates and ou
         self.dist = dist_stack
         self.orientations = angle_stack
 
-
-#Functions
+#
+### Data processing Functions
+#
 
 def get_ori(Dir, video, traj, thresh = 50, noise_thresh=0.5): #Gets raw orientations and directions from numpy array of positions and video file.
     #Both .npy file and video file should be in the same Dir folder.
@@ -287,8 +297,9 @@ def direc_stats(data, chunkrange, fly):     #Get stats about a chunk
     plt.plot(ori)
     plt.plot(tronc_direc)
     
-def angleFromPoints(x,y): #Gets two arrays of x/y distances between two points
-                          #Can do case by case or batch treatment.  
+def angleFromPoints(x,y): #Gets x and y distances between two points, give back distance and
+                                                    #angle in degrees on a trigonometric circle
+                          #Can do case by case or batch treatment.
     
     dist = np.sqrt((x*x)+(y*y)) #Distance between each couple of points
     angle = np.degrees(np.arctan(np.absolute(y)/np.absolute(x)))
@@ -303,32 +314,95 @@ def angleFromPoints(x,y): #Gets two arrays of x/y distances between two points
             angle[i] =360 - angle[i]
     return dist, angle
 
+def landscape(flystack, identity): #Outputs a matrix representing what the fly has been seing.
 
-#Handling the data in a "packaged" way
+    #Import a fly stack and define a focus fly
+    focus = flystack[identity]
+    others = copy.deepcopy(flystack)
+    others.pop(identity)
+    
+    #calculate all relative flies, with size (function of distance)
+    rels = list()
+    for fly in others:
+        rels.append(relative_fly(focus, fly))
+            
+    #project every relative fly on a landscape :
+    projection_distance = 1/np.tan(np.radians(1)) #This value makes it so that 1degree = 1pix
+    
+    for fly in rels:
+        fly.size[np.isnan(fly.size)] = 0
+        fly.ori_rel[np.isnan(fly.ori_rel)] = 0
+        for i in range(len(fly.size)):
+            if ~np.isnan(fly.dist[i]):
+                fly.size[i] = fly.size[i]*(projection_distance/fly.dist[i])
 
-def save_ori_pickle(session_name, Dir = "/home/maubry/python/idtrackerai/raw"):
-    st = time.time()
+        fly.size = np.ceil(fly.size).astype(int)
+        fly.ori_rel = (np.floor(fly.ori_rel).astype(int))
+    FOV = 300
+    vision_lines = np.zeros([focus.length,FOV]) #Only take into acount a FOV of 300degrees
+    
+    #Remove flies situated outside FOV
+    downlim = (360-FOV)/2
+    uplim = FOV+downlim
+    fly.size[fly.ori_rel < downlim] = 0
+    fly.size[fly.ori_rel > uplim] = 0
+    
+    #Reset 0 as begining of the FOV
+    fly.ori_rel -= int(downlim)
+    
+    for fly in rels:
+        for frame in range(len(fly.dist)):
+            if fly.size[frame] !=0:
+                proj_bounds = list()
+                proj_bounds = ((fly.ori_rel[frame]-np.floor(fly.size[frame]/2)).astype(int),
+                               (fly.ori_rel[frame]+np.floor(fly.size[frame]/2)).astype(int))
+                proj_bounds = list(proj_bounds)
+                if proj_bounds[0] <0:
+                    proj_bounds[0] = 0
+                    
+                if proj_bounds[1] >=FOV:
+                    proj_bounds[1] = FOV-1
+                vision_lines[frame, range(proj_bounds[0], proj_bounds[1])] = 1
+                #Check for overlaps
+    return vision_lines
+
+#
+### Storing and accessing data in pickles (.pkl)
+#
+
+def save_ori_pickle(session_name, Dir = "/home/maubry/python/idtrackerai/raw"): 
+    #video and numpy files should be in Dir, under the same name.
+    st = time.time() #Timing processing
+    
+    #Setting names and pickle handle
     video = session_name+".avi"
     traj = session_name+".npy"
     pkl_name = session_name+"_ori_data.pkl"
-
-    flystack = get_ori(Dir, video, traj)
     f = open(pkl_name, "wb")
+    
+    #Processing data
+    flystack = get_ori(Dir, video, traj)
+    
+    #Storing data and displaying processed time.
     pkl.dump(flystack, f)
     laps = time.time() - st
     print('time elapsed : {}min and {}sec'.format(laps//60, int(laps%60)))
 
     
-def get_ori_pickle(session_name):
+def get_ori_pickle(session_name): #.pkl file should be in .
+    
+    #Setting name and handle
     pkl_name = session_name+"_ori_data.pkl"
     f = open(pkl_name, "rb")
+    
+    #Outputting loaded data
     flystack = pkl.load(f)
     return flystack
 
 
-
-###Graphical visualisation
-
+#
+### Graphical visualisation
+#
 
 def polar_histogram(rel_set, distance=True, #if distance is false, will plot angle instead.
                     force_bin=72, #Number of divisions
@@ -336,6 +410,7 @@ def polar_histogram(rel_set, distance=True, #if distance is false, will plot ang
     
     #Visual rendering of a relative_fly set (angle and distance)
     
+    #Plotting either distance of angle
     if distance:
         num_bins_theta = 1 # Number of bin edges in angular direction (just one so we get info only about distance)
         num_bins_r = force_bin
@@ -348,7 +423,7 @@ def polar_histogram(rel_set, distance=True, #if distance is false, will plot ang
     r_edges = np.linspace(0, dist_range, num_bins_r + 1) 
     theta_edges = np.linspace(0, 2*np.pi, num_bins_theta + 1)
 
-    # Transform cartesian to polar coordinates
+    # Loading data. r is distance to focus fly, theta angle in radian
     r = rel_set.dist
     theta = np.radians(rel_set.orientations)
     
