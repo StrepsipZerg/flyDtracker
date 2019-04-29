@@ -14,6 +14,8 @@ import numpy.ma as ma
 import time
 import pickle as pkl
 import matplotlib.pyplot as plt
+import skvideo.io
+
 
 
 #
@@ -130,7 +132,7 @@ class relative_set(object): #Given a list of fly_data objects, calculates and ou
 ### Data processing Functions
 #
 
-def get_ori(Dir, video, traj, thresh = 50, noise_thresh=0.5): #Gets raw orientations and directions from numpy array of positions and video file.
+def get_ori(Dir, video, traj, thresh = 50, noise_thresh=0.5, autocorrec=True): #Gets raw orientations and directions from numpy array of positions and video file.
     #Both .npy file and video file should be in the same Dir folder.
     
     #Fantastic files and where to find them
@@ -227,8 +229,12 @@ def get_ori(Dir, video, traj, thresh = 50, noise_thresh=0.5): #Gets raw orientat
     data['contours'] = right_contours
     
     flystack = list()
-    for fly in range(nberflies):
+    for fly in range(nberflies): #aggregate the data in different fly_data objects, and put them in a list, aka flystack.
         
+        fly_object = fly_data(data, fly)
+        if autocorrec:
+            fly_object.ori_correc(overwrite=True)
+            
         flystack.append(fly_data(data, fly))
     
     return flystack
@@ -321,6 +327,8 @@ def landscape(flystack, identity): #Outputs a matrix representing what the fly h
     others = copy.deepcopy(flystack)
     others.pop(identity)
     
+    #Note : the orientations in the flystack should have been corrected for better results.
+    
     #calculate all relative flies, with size (function of distance)
     rels = list()
     for fly in others:
@@ -370,7 +378,7 @@ def landscape(flystack, identity): #Outputs a matrix representing what the fly h
 ### Storing and accessing data in pickles (.pkl)
 #
 
-def save_ori_pickle(session_name, Dir = "/home/maubry/python/idtrackerai/raw"): 
+def save_ori_pickle(session_name, Dir = "/home/maubry/python/idtrackerai/raw", autocorrec=True): 
     #video and numpy files should be in Dir, under the same name.
     st = time.time() #Timing processing
     
@@ -381,7 +389,7 @@ def save_ori_pickle(session_name, Dir = "/home/maubry/python/idtrackerai/raw"):
     f = open(pkl_name, "wb")
     
     #Processing data
-    flystack = get_ori(Dir, video, traj)
+    flystack = get_ori(Dir, video, traj, autocorrec=autocorrec)
     
     #Storing data and displaying processed time.
     pkl.dump(flystack, f)
@@ -479,4 +487,99 @@ def polar_histogram(rel_set, distance=True, #if distance is false, will plot ang
     plt.axvline(theta_mean, color="red", linewidth=3)
     plt.axvline(theta_mean-theta_std, color="red", linestyle=":", linewidth=2)
     plt.axvline(theta_mean+theta_std, color="red", linestyle=":", linewidth=2)
+
+
+def flyvision(file_name, vision_lines, downlim, uplim, fps='30'): #Should be given a landscape set, and frame limits
+    fps = str(fps)
+    frame_range = range(downlim, uplim)
+    vision_matrix = list()
+    for line in vision_lines[frame_range,]:
+        line_stack = np.stack([line,line])
+        for _ in range(3):
+            line_stack = np.vstack([line_stack,line_stack])
+            
+        col_layer1 = np.zeros_like(line_stack)
+        col_layer1[line_stack == 1] = 220
+        
+        col_layer2 = np.zeros_like(line_stack)
+        col_layer2[line_stack == 1] = 150
+        
+        cols = np.stack([line_stack,col_layer1, col_layer2], axis =-1)
+        vision_matrix.append(cols)
+        
+    vision_matrix = np.stack(vision_matrix)
+    
+    #Rules that ffmpeg should follow
+    inputdict={'-r': fps}
+    outputdict={'-vcodec': 'libx264', '-pix_fmt': 'yuv420p', '-r': fps}
+    
+    #The writer object we want to use
+    writer = skvideo.io.FFmpegWriter(file_name, inputdict, outputdict)
+    
+    #Write the video frame by frame for the right amount of time.
+    n_frames = int(uplim - downlim)
+    for i in range(n_frames):
+        writer.writeFrame(vision_matrix[i,:,:,:])
+    writer.close()
+    print("Video file saved as {}.".format(file_name))
+    
+def draw_ori(path_to_vid, flystack, output_name = "draw_ori.avi"): #Gets raw orientations and directions from numpy array 
+                                                                        #of positions and video file.
+    #Both .npy file and video file should be in the same Dir folder.
+    
+    #Fantastic files and where to find them
+    n_flies = len(flystack)
+    cap = cv2.VideoCapture(path_to_vid)
+    
+    colors = list()
+    for _ in range(n_flies):
+        cols = np.random.random(size=(3)) * 255
+        cols = tuple(cols.astype(int))
+        cols = (int(cols[0]), int(cols[1]), int(cols[2]))
+        colors.append(cols)
+
+    #Some information that will be useful later
+    framerate = cap.get(cv2.CAP_PROP_FPS)
+    
+    i = 0 #Index for taking the right trajectories.
+    
+    #Rules that ffmpeg should follow
+    fps='30'
+    inputdict={'-r': fps}
+    outputdict={'-vcodec': 'libx264', '-pix_fmt': 'yuv420p', '-r': fps}
+    
+    #The writer object we will use
+    writer = skvideo.io.FFmpegWriter(output_name, inputdict, outputdict)
+
+    while(cap.isOpened()):
+    #for _ in range(500): #To be used to make it run faster if needed
+    
+        ret, img = cap.read()
+
+        if img is None:  #If no more images, break the loop
+            cap.release()
+            continue
+
+        for num in range(n_flies): #For every fly
+            
+            fly = flystack[num]
+            center = fly.positions[i]  #Get center for current frame
+            center = center.astype('int')
+            angle = fly.orientations[i] #Get orientation for current frame
+            
+            newx = center[0]+(np.cos(np.radians(angle))*30) #Get distance forward in x
+            newy = center[1]+(np.sin(np.radians(angle))*30) #Get distance forward in y
+            
+            center_plus = (int(newx),int(newy)) #Second point of vector
+            
+            center = tuple(center) #Conversion to please cv2
+            center_plus = tuple(center_plus)
+            
+            cv2.line(img, center, center_plus, colors[num]) #Draw line
+            
+        writer.writeFrame(img)
+        i +=1
+    writer.close()
+
+    print("Video file saved as {}.".format('output_name.avi'))
 
