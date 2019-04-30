@@ -32,58 +32,63 @@ class fly_data(object):
         self.directions = data_dict['directions'][:,identity]
         self.orientations = data_dict['orientations'][:,identity]
         self.speeds = data_dict['speeds'][:,identity]
+        self.corrected = np.zeros_like(self.orientations)
         
-    def ori_correc(self, overwrite=False): #Outputs corrected orientations based on inputted directions.
-        #Should be given two arrays of numbers
+    def ori_correc(self, write=True): #Adds corrected orientations in fly object.
+        #Should be given a fly object with orientation and direction element.
+        #Will either add a self.corrected element or output corrected orientations.
 
-        correc = convert180to360(self.orientations) #Put orientations in a 360 degrees format
+        raws = flip(self.orientations, -90, ref=180)  #Because the reference in the ellipse fitting is a vertical line,
+                                                #and we want it to be trignonometric zero.
+        correc = convertToTrigo(raws, reverse=True) #Put orientations in a 360 degrees format and corrects 
+        
+        #Check which flipping is better :
         flipped = flip(correc) #Flips orientations
-        minus = flip(correc, -90)
-        plus = flip(correc, 90)
+#         minus = flip(correc, -90)
+#         plus = flip(correc, 90)
 
         #Calculate correlation for the 4 possibilities
         correl = dict()
         correl['flipped'] = ma.corrcoef(ma.masked_invalid(flipped), ma.masked_invalid(self.directions))[1,0]
-        correl['minus'] = ma.corrcoef(ma.masked_invalid(minus), ma.masked_invalid(self.directions))[1,0]
-        correl['plus'] = ma.corrcoef(ma.masked_invalid(plus), ma.masked_invalid(self.directions))[1,0]
+#         correl['minus'] = ma.corrcoef(ma.masked_invalid(minus), ma.masked_invalid(self.directions))[1,0]
+#         correl['plus'] = ma.corrcoef(ma.masked_invalid(plus), ma.masked_invalid(self.directions))[1,0]
         correl['correc'] = ma.corrcoef(ma.masked_invalid(correc), ma.masked_invalid(self.directions))[1,0]
 
         #get optimum
         opti = max(correl.items(), key=operator.itemgetter(1))[0]
 
         #Outputs better corrected orientations
-        if opti == 'flipped':
-            print("Orientations have been corrected and flipped 180 degrees.")
-            print("Correlation is ", correl['flipped'])
-            if overwrite == True:
-                self.orientations = flipped
-            else:
-                return flipped
-
-        elif opti == 'minus':
-            print("orientations have been corrected and flipped -90 degrees")
-            print("Correlation is ", correl['minus'])
-            if overwrite == True:
-                self.orientations = minus
-            else:
-                return minus
-
-        elif opti == 'plus':
-            print("orientations have been corrected and flipped +90 degrees")
-            print("Correlation is ", correl['plus'])
-            if overwrite == True:
-                self.orientations = plus
-            else:
-                return plus
-
-        elif opti == 'correc':
+        
+        if opti == 'correc':
             print("orientations have been corrected only")
             print("Correlation is ", correl['correc'])
-            if overwrite == True:
-                self.orientations = correc
+            if write:
+                self.corrected = correc
             else:
                 return correc
-            
+#         elif opti == 'minus':
+#             print("orientations have been corrected and flipped -90 degrees")
+#             print("Correlation is ", correl['minus'])
+#             if write:
+#               self.corrected = minus
+#             else:
+#                 return minus
+
+#         elif opti == 'plus':
+#             print("orientations have been corrected and flipped +90 degrees")
+#             print("Correlation is ", correl['plus'])
+#             if write:
+#               self.corrected = plus
+#             else:
+#                 return plus
+
+        elif opti == 'flipped':
+            print("Orientations have been corrected and flipped 180 degrees.")
+            print("Correlation is ", correl['flipped'])
+            if write:
+                self.corrected = flipped
+            else:
+                return flipped            
             
 class relative_fly(object): #Should be given two fly objects, and calculate relative distance, speed, angle from focus to other fly.
     
@@ -233,9 +238,9 @@ def get_ori(Dir, video, traj, thresh = 50, noise_thresh=0.5, autocorrec=True): #
         
         fly_object = fly_data(data, fly)
         if autocorrec:
-            fly_object.ori_correc(overwrite=True)
+            fly_object.ori_correc()
             
-        flystack.append(fly_data(data, fly))
+        flystack.append(fly_object)
     
     return flystack
         
@@ -263,29 +268,34 @@ def get_angle(trajectories, frameID, previous_angles, noise_thresh=0.5):
 
 
 
-def convert180to360(ori): #Should be given an array of numbers
+def convertToTrigo(ori, reverse = False): #Should be given an array of numbers
     
-    ori_conv = copy.deepcopy(ori)
-    diffs = ori_conv[1:] - ori_conv[0:-1]
-    bool = True
-    for i in range(len(diffs)):
-        if abs(diffs[i]) > 90 and bool == True:
-            ori_conv[i+1:] += 180
-            bool = False
-        elif abs(diffs[i]) > 90 and bool == False:
-            ori_conv[i+1:] -= 180
-            bool = True
-    return(ori_conv)
+    angles = copy.deepcopy(ori)
+    i=0
+    ori_delta = angles[1:] - angles[:-1] #Variation from one position to another
+    ori_delta = np.insert(ori_delta, 0,0) #First variation is zero
+    ori_delta[np.isnan(ori_delta)] = 0 #Turn nans into zeros
+    
+    if reverse: #If we want change sense
+        ori_delta = ori_delta*-1 #Change the sign of every variation
+    
+    for i in range(len(ori_delta)):
+        if ori_delta[i] > 90:
+            ori_delta[i] -= 180
+                
+        elif ori_delta[i] < -90:
+            ori_delta[i] += 180
+            
+    new_angles = angles[0] + np.cumsum(ori_delta)
+    new_angles = new_angles%360
+    return(new_angles)
 
-def flip(ori, angle=180): #Should be given an array of numbers and a single value
+def flip(ori, angle=180, ref=360): #Should be given an array of numbers and a single value
     
     ori_flip = copy.deepcopy(ori)
     ori_flip += angle
-    for i in range(len(ori_flip)):
-        if ori_flip[i] >= 360:
-            ori_flip[i:] -= 360
-        elif ori_flip[i] <= 0:
-            ori_flip[i:] +=360
+    
+    ori_flip = ori_flip%ref
     return(ori_flip)
 
 
@@ -523,8 +533,9 @@ def flyvision(file_name, vision_lines, downlim, uplim, fps='30'): #Should be giv
     writer.close()
     print("Video file saved as {}.".format(file_name))
     
-def draw_ori(path_to_vid, flystack, output_name = "draw_ori.avi"): #Gets raw orientations and directions from numpy array 
-                                                                        #of positions and video file.
+def draw_ori(path_to_vid, flystack, output_name = "draw_ori.avi", shorter=True, corrected=True, draw_ref = True): #Gets raw orientations and directions from numpy array 
+                                                                        #of positions and video file.        
+        
     #Both .npy file and video file should be in the same Dir folder.
     
     #Fantastic files and where to find them
@@ -547,39 +558,71 @@ def draw_ori(path_to_vid, flystack, output_name = "draw_ori.avi"): #Gets raw ori
     fps='30'
     inputdict={'-r': fps}
     outputdict={'-vcodec': 'libx264', '-pix_fmt': 'yuv420p', '-r': fps}
+    font = cv2.FONT_HERSHEY_SIMPLEX
     
     #The writer object we will use
     writer = skvideo.io.FFmpegWriter(output_name, inputdict, outputdict)
-
+        
     while(cap.isOpened()):
-    #for _ in range(500): #To be used to make it run faster if needed
     
         ret, img = cap.read()
 
         if img is None:  #If no more images, break the loop
             cap.release()
             continue
+        elif i > 500:
+            cap.release()
+            continue
 
         for num in range(n_flies): #For every fly
-            
             fly = flystack[num]
+            if corrected:
+                try:
+                    angle = fly.corrected[i] #Get orientation for current frame
+                except:
+                    print("Could not load corrected orientations. Switching to raw.")
+                    corrected = False
+                    angle = fly.orientations[i] #Get orientation for current frame
+            else:
+                angle = fly.orientations[i]
+        
+            angle = np.radians(angle)
+        
             center = fly.positions[i]  #Get center for current frame
-            center = center.astype('int')
-            angle = fly.orientations[i] #Get orientation for current frame
+            if ~np.isnan(center[0]):
+                center = center.astype('int')
             
-            newx = center[0]+(np.cos(np.radians(angle))*30) #Get distance forward in x
-            newy = center[1]+(np.sin(np.radians(angle))*30) #Get distance forward in y
+                newx = center[0]+(np.cos(angle)*30) #Get distance forward in x
+                newy = center[1]-(np.sin(angle)*30) #Get distance forward in y
             
-            center_plus = (int(newx),int(newy)) #Second point of vector
+                center_plus = (int(newx),int(newy)) #Second point of vector
             
-            center = tuple(center) #Conversion to please cv2
-            center_plus = tuple(center_plus)
+                center = tuple(center) #Conversion to please cv2
+                center_plus = tuple(center_plus)
             
-            cv2.line(img, center, center_plus, colors[num]) #Draw line
+                cv2.arrowedLine(img, center, center_plus, colors[num]) #Draw line
+                cv2.putText(img, str(num),(center[0],center[1]-30), font, 1,colors[num],2,cv2.LINE_AA) #add fly ID next to it
             
-        writer.writeFrame(img)
-        i +=1
-    writer.close()
+        if draw_ref:
+            #Drawing references
+            cv2.line(img, (70,80), (80,70), (255,255,255), thickness=2)
+            cv2.line(img, (70,70), (80,80), (255,255,255), thickness=2)
+            cv2.arrowedLine(img, (75,75), (75,35), (255,255,255), thickness=1)
+            cv2.arrowedLine(img, (75,75), (75,115), (255,255,255), thickness=1)
+            cv2.arrowedLine(img, (75,75), (35,75), (255,255,255), thickness=1)
+            cv2.arrowedLine(img, (75,75), (115,75), (255,255,255), thickness=1)
+    
+            cv2.putText(img, "y-40", (75,25), font, 0.5, (255,255,255))
+            cv2.putText(img, "y+40", (75,125), font, 0.5, (255,255,255))
+            cv2.putText(img, "x-40", (25,75), font, 0.5, (255,255,255))
+            cv2.putText(img, "x+40", (125,75), font, 0.5, (255,255,255))
+            #END OF EXPERIMENT
+            
+            
+        writer.writeFrame(img) #Write the modified frame
+        i +=1 #Going on to next frame
+    
+    writer.close() 
 
-    print("Video file saved as {}.".format('output_name.avi'))
+    print("Video file saved as {}.".format(output_name))
 
