@@ -1,5 +1,16 @@
 #Python file for working functions.
 
+##Preliminary information :
+
+#All the functions coded below use referencials directly or indirectly inherited from videos. This means point zero (0,0) is the top left corner of the screen. Hence vector from zero to (1,1) goes toward bottom right corner. This means angle would appear to turn clockwise on the video.
+
+#This is not change due to convenience, and will always be left to be changed manually for visualisation of the angle values.
+
+#The convertToTrigo function includes the possiblity to change the sense of a set of angles.
+
+#The angles are saved in degrees and locally converted to radians only when necessary.
+
+
 #Necessary modules
 from scipy import spatial
 from scipy import ndimage
@@ -32,16 +43,20 @@ class fly_data(object):
         self.directions = data_dict['directions'][:,identity]
         self.orientations = data_dict['orientations'][:,identity]
         self.speeds = data_dict['speeds'][:,identity]
-        self.corrected = np.zeros_like(self.orientations)
+        self.old_ori = copy.deepcopy(self.orientations)
         
     def ori_correc(self, write=True): #Adds corrected orientations in fly object.
         #Should be given a fly object with orientation and direction element.
         #Will either add a self.corrected element or output corrected orientations.
 
-        raws = flip(self.orientations, -90, ref=180)  #Because the reference in the ellipse fitting is a vertical line,
+        raws = flip(self.orientations, 90, ref=180)  #Because the reference in the ellipse fitting is a vertical line,
                                                 #and we want it to be trignonometric zero.
-        correc = convertToTrigo(raws, reverse=True) #Put orientations in a 360 degrees format and corrects 
+        correc = convertToTrigo(raws, reverse=False) #Put orientations in a 360 degrees format and corrects 
         
+        
+        #Remove the parts of self.directions that are probably garbage
+        crop_dir = copy.deepcopy(self.directions)
+        crop_dir[crop_dir<30] = np.nan
         #Check which flipping is better :
         flipped = flip(correc) #Flips orientations
 #         minus = flip(correc, -90)
@@ -49,10 +64,10 @@ class fly_data(object):
 
         #Calculate correlation for the 4 possibilities
         correl = dict()
-        correl['flipped'] = ma.corrcoef(ma.masked_invalid(flipped), ma.masked_invalid(self.directions))[1,0]
-#         correl['minus'] = ma.corrcoef(ma.masked_invalid(minus), ma.masked_invalid(self.directions))[1,0]
-#         correl['plus'] = ma.corrcoef(ma.masked_invalid(plus), ma.masked_invalid(self.directions))[1,0]
-        correl['correc'] = ma.corrcoef(ma.masked_invalid(correc), ma.masked_invalid(self.directions))[1,0]
+        correl['flipped'] = ma.corrcoef(ma.masked_invalid(flipped), ma.masked_invalid(crop_dir))[1,0]
+#         correl['minus'] = ma.corrcoef(ma.masked_invalid(minus), ma.masked_invalid(crop_dir))[1,0]
+#         correl['plus'] = ma.corrcoef(ma.masked_invalid(plus), ma.masked_invalid(crop_dir))[1,0]
+        correl['correc'] = ma.corrcoef(ma.masked_invalid(correc), ma.masked_invalid(crop_dir))[1,0]
 
         #get optimum
         opti = max(correl.items(), key=operator.itemgetter(1))[0]
@@ -63,14 +78,14 @@ class fly_data(object):
             print("orientations have been corrected only")
             print("Correlation is ", correl['correc'])
             if write:
-                self.corrected = correc
+                self.orientations = correc
             else:
                 return correc
 #         elif opti == 'minus':
 #             print("orientations have been corrected and flipped -90 degrees")
 #             print("Correlation is ", correl['minus'])
 #             if write:
-#               self.corrected = minus
+#               self.orientations = minus
 #             else:
 #                 return minus
 
@@ -78,7 +93,7 @@ class fly_data(object):
 #             print("orientations have been corrected and flipped +90 degrees")
 #             print("Correlation is ", correl['plus'])
 #             if write:
-#               self.corrected = plus
+#               self.orientations = plus
 #             else:
 #                 return plus
 
@@ -86,7 +101,7 @@ class fly_data(object):
             print("Orientations have been corrected and flipped 180 degrees.")
             print("Correlation is ", correl['flipped'])
             if write:
-                self.corrected = flipped
+                self.orientations = flipped
             else:
                 return flipped            
             
@@ -268,7 +283,9 @@ def get_angle(trajectories, frameID, previous_angles, noise_thresh=0.5):
 
 
 
-def convertToTrigo(ori, reverse = False): #Should be given an array of numbers
+def convertToTrigo(ori, reverse = False): #Should be given an array of numbers.
+                                          #'Unwrap' a set of angles, and re-wrap it around the trigonometric circle.
+                                          #Also corrects big variations.
     
     angles = copy.deepcopy(ori)
     i=0
@@ -278,7 +295,10 @@ def convertToTrigo(ori, reverse = False): #Should be given an array of numbers
     
     if reverse: #If we want change sense
         ori_delta = ori_delta*-1 #Change the sign of every variation
+        
+        angles[0] = np.absolute(angles[0]-360) #Change the first angle to be its own reflexion
     
+    #Every variation bigger than 90 is considered to be a flipping error.
     for i in range(len(ori_delta)):
         if ori_delta[i] > 90:
             ori_delta[i] -= 180
@@ -381,14 +401,14 @@ def landscape(flystack, identity): #Outputs a matrix representing what the fly h
                 if proj_bounds[1] >=FOV:
                     proj_bounds[1] = FOV-1
                 vision_lines[frame, range(proj_bounds[0], proj_bounds[1])] = 1
-                #Check for overlaps
+
     return vision_lines
 
 #
 ### Storing and accessing data in pickles (.pkl)
 #
 
-def save_ori_pickle(session_name, Dir = "/home/maubry/python/idtrackerai/raw", autocorrec=True): 
+def save_ori_pickle(session_name, Dir = "/home/maubry/python/idtrackerai/raw", autocorrec=True, noise_thresh = 0.5): 
     #video and numpy files should be in Dir, under the same name.
     st = time.time() #Timing processing
     
@@ -399,7 +419,7 @@ def save_ori_pickle(session_name, Dir = "/home/maubry/python/idtrackerai/raw", a
     f = open(pkl_name, "wb")
     
     #Processing data
-    flystack = get_ori(Dir, video, traj, autocorrec=autocorrec)
+    flystack = get_ori(Dir, video, traj, autocorrec=autocorrec, noise_thresh=noise_thresh)
     
     #Storing data and displaying processed time.
     pkl.dump(flystack, f)
@@ -494,15 +514,18 @@ def polar_histogram(rel_set, distance=True, #if distance is false, will plot ang
     plot_polar_histogram(Pos.statistic/area/np.sum(Pos.statistic), label, plt.subplot(131, polar=True))
     theta_mean = stats.circmean(theta[~np.isnan(theta)])
     theta_std = stats.circstd(theta[~np.isnan(theta)])
+    
     plt.axvline(theta_mean, color="red", linewidth=3)
     plt.axvline(theta_mean-theta_std, color="red", linestyle=":", linewidth=2)
     plt.axvline(theta_mean+theta_std, color="red", linestyle=":", linewidth=2)
 
 
-def flyvision(file_name, vision_lines, downlim, uplim, fps='30'): #Should be given a landscape set, and frame limits
+def flyvision(output_name, vision_lines, downlim, uplim, fps='30'): #Should be given an output_name,
+                                                                        #a landscape set, and frame limits
     fps = str(fps)
     frame_range = range(downlim, uplim)
     vision_matrix = list()
+    
     for line in vision_lines[frame_range,]:
         line_stack = np.stack([line,line])
         for _ in range(3):
@@ -524,17 +547,21 @@ def flyvision(file_name, vision_lines, downlim, uplim, fps='30'): #Should be giv
     outputdict={'-vcodec': 'libx264', '-pix_fmt': 'yuv420p', '-r': fps}
     
     #The writer object we want to use
-    writer = skvideo.io.FFmpegWriter(file_name, inputdict, outputdict)
+    writer = skvideo.io.FFmpegWriter(output_name, inputdict, outputdict)
     
     #Write the video frame by frame for the right amount of time.
     n_frames = int(uplim - downlim)
-    for i in range(n_frames):
+    
+    for i in range(n_frames):        
         writer.writeFrame(vision_matrix[i,:,:,:])
     writer.close()
-    print("Video file saved as {}.".format(file_name))
     
-def draw_ori(path_to_vid, flystack, output_name = "draw_ori.avi", shorter=True, corrected=True, draw_ref = True): #Gets raw orientations and directions from numpy array 
-                                                                        #of positions and video file.        
+    print("Video file saved as {}.".format(output_name))
+    
+    
+def draw_ori(path_to_vid, flystack, output_name = "draw_ori.avi", shorter=True, limit=500, corrected=True, draw_ref = True): 
+            #Gets raw orientations and directions from numpy array 
+                #of positions and video file.        
         
     #Both .npy file and video file should be in the same Dir folder.
     
@@ -555,7 +582,7 @@ def draw_ori(path_to_vid, flystack, output_name = "draw_ori.avi", shorter=True, 
     i = 0 #Index for taking the right trajectories.
     
     #Rules that ffmpeg should follow
-    fps='30'
+    fps=str(framerate)
     inputdict={'-r': fps}
     outputdict={'-vcodec': 'libx264', '-pix_fmt': 'yuv420p', '-r': fps}
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -570,7 +597,7 @@ def draw_ori(path_to_vid, flystack, output_name = "draw_ori.avi", shorter=True, 
         if img is None:  #If no more images, break the loop
             cap.release()
             continue
-        elif i > 500:
+        elif i > limit:
             cap.release()
             continue
 
@@ -578,13 +605,13 @@ def draw_ori(path_to_vid, flystack, output_name = "draw_ori.avi", shorter=True, 
             fly = flystack[num]
             if corrected:
                 try:
-                    angle = fly.corrected[i] #Get orientation for current frame
-                except:
-                    print("Could not load corrected orientations. Switching to raw.")
-                    corrected = False
                     angle = fly.orientations[i] #Get orientation for current frame
+                except:
+                    print("Could not load corrected orientations. Switching to old orientations.")
+                    corrected = False
+                    angle = fly.old_ori[i] #Get orientation for current frame
             else:
-                angle = fly.orientations[i]
+                angle = fly.old_ori[i]
         
             angle = np.radians(angle)
         
@@ -593,7 +620,7 @@ def draw_ori(path_to_vid, flystack, output_name = "draw_ori.avi", shorter=True, 
                 center = center.astype('int')
             
                 newx = center[0]+(np.cos(angle)*30) #Get distance forward in x
-                newy = center[1]-(np.sin(angle)*30) #Get distance forward in y
+                newy = center[1]+(np.sin(angle)*30) #Get distance forward in y
             
                 center_plus = (int(newx),int(newy)) #Second point of vector
             
@@ -616,6 +643,7 @@ def draw_ori(path_to_vid, flystack, output_name = "draw_ori.avi", shorter=True, 
             cv2.putText(img, "y+40", (75,125), font, 0.5, (255,255,255))
             cv2.putText(img, "x-40", (25,75), font, 0.5, (255,255,255))
             cv2.putText(img, "x+40", (125,75), font, 0.5, (255,255,255))
+            cv2.putText(img, path_to_vid, (512,0), font, 0.5, (255,255,255))
             #END OF EXPERIMENT
             
             
