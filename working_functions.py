@@ -26,7 +26,7 @@ import time
 import pickle as pkl
 import matplotlib.pyplot as plt
 import skvideo.io
-
+import scipy.signal as sgl
 
 
 #
@@ -45,10 +45,16 @@ class fly_data(object):
         self.speeds = data_dict['speeds'][:,identity]
         self.old_ori = copy.deepcopy(self.orientations)
         
-    def ori_correc(self, write=True): #Adds corrected orientations in fly object.
+    def ori_correc2(self, write=True): #Adds corrected orientations in fly object.
         #Should be given a fly object with orientation and direction element.
         #Will either add a self.corrected element or output corrected orientations.
 
+        
+        
+        ###NOT USEFUL ANYMORE, USE ori_corrc()
+        
+        
+        
         raws = flip(self.orientations, 90, ref=180)  #Because the reference in the ellipse fitting is a vertical line,
                                                 #and we want it to be trignonometric zero.
         correc = convertToTrigo(raws, reverse=False) #Put orientations in a 360 degrees format and corrects 
@@ -56,7 +62,9 @@ class fly_data(object):
         
         #Remove the parts of self.directions that are probably garbage
         crop_dir = copy.deepcopy(self.directions)
-        crop_dir[crop_dir<30] = np.nan
+        dir_var = stats.circvar(crop_dir)
+        crop_dir[dir_var>30] = np.nan
+        
         #Check which flipping is better :
         flipped = flip(correc) #Flips orientations
 #         minus = flip(correc, -90)
@@ -103,7 +111,65 @@ class fly_data(object):
             if write:
                 self.orientations = flipped
             else:
-                return flipped            
+                return flipped
+            
+    def ori_correc(self, chunksize=1000): #Overwrites self.orientations in fly object.
+        #New orientations are corrected to match a trigono;etric referencial, and be as close as possible to non-garbage directions
+        
+    
+        raws = flip(self.orientations, 90, ref=180)  #Because the reference in the ellipse fitting is a vertical line,
+                                                    #and we want it to be trignonometric zero.
+        correc = convertToTrigo(raws, reverse=False) #Put orientations in a 360 degrees format and corrects 
+            
+            
+        #Remove the parts of self.directions that are probably garbage
+        crop_dir = copy.deepcopy(self.directions)
+    
+        dir_var = rolling_var_ori(self.directions, 2)
+        
+        #If variance of direction is greater than 30 for this point it's probably thrashy data.
+        crop_dir[dir_var>30] = np.nan
+        piled_ori = np.zeros_like(correc)
+        
+        #check which is better for every chunk :
+        for i in range(int(self.length/chunksize)): #For every chunk of chunksize
+            chunk_range = range(int(i*chunksize),
+                                int((i+1)*chunksize))
+            #Get chunks
+            chunk_ori = correc[chunk_range]
+            chunk_flipped = flip(chunk_ori)
+            chunk_dir = crop_dir[chunk_range]
+            
+            
+            #get the bigger 'proximity score' match of the two, put it in the piled_ori array
+            piled_ori[chunk_range] = flipNmatch(chunk_ori, chunk_flipped, chunk_dir)
+            
+        self.orientations = piled_ori
+            
+def flipNmatch(ori1, ori2, direc): #Given a set of orientations and a set of directions, outputs the better fit to directions
+                                #between raw ori and flipped ori
+        cosine_sum = dict()
+        
+        diff1 = ori1 - direc
+        diff2 = ori2 - direc
+        
+        diff1[np.isnan(diff1)] = 0
+        diff2[np.isnan(diff2)] = 0
+        
+        #Cosine of the difference between the two angles is beleived to be a good proxy for proximity
+            #cos(0) = 1, cos(180) = -1.
+            
+        cosine_sum['ori1'] = np.sum(np.cos(np.radians(diff1)))
+        cosine_sum['ori2'] = np.sum(np.cos(np.radians(diff2)))
+        
+        #get optimum
+        opti = max(cosine_sum.items(), key=operator.itemgetter(1))[0]
+        
+        if opti == 'ori1':
+            return ori1
+        elif opti == 'ori2':
+            return ori2
+
             
 class relative_fly(object): #Should be given two fly objects, and calculate relative distance, speed, angle from focus to other fly.
     
@@ -152,7 +218,7 @@ class relative_set(object): #Given a list of fly_data objects, calculates and ou
 ### Data processing Functions
 #
 
-def get_ori(Dir, video, traj, thresh = 50, noise_thresh=0.5, autocorrec=True): #Gets raw orientations and directions from numpy array of positions and video file.
+def get_ori(Dir, video, traj, thresh = 50, noise_thresh=0, autocorrec=True): #Gets raw orientations and directions from numpy array of positions and video file.
     #Both .npy file and video file should be in the same Dir folder.
     
     #Fantastic files and where to find them
@@ -259,7 +325,7 @@ def get_ori(Dir, video, traj, thresh = 50, noise_thresh=0.5, autocorrec=True): #
     
     return flystack
         
-def get_angle(trajectories, frameID, previous_angles, noise_thresh=0.5):
+def get_angle(trajectories, frameID, previous_angles, noise_thresh=0):
                 #Outputs direction, speed and distance for a given frame.
     
     positions = trajectories[frameID]
@@ -404,11 +470,61 @@ def landscape(flystack, identity): #Outputs a matrix representing what the fly h
 
     return vision_lines
 
+def rolling_var_ori(angles, window_size):  #Outputs local circular variance of the given array, 
+                                            #for a given window size (2 works well) 
+    
+#Is useless, as it can be created using rolling_stat
+
+    var = np.zeros(shape=(len(angles)))
+    x =  window_size #half the size of the window    
+    for i in range(len(angles)):
+        set_chunk = angles[int(i-x):int(i+x)]
+        
+        var[i] = np.degrees(stats.circvar(np.radians(set_chunk)))
+
+    return var
+
+def rolling_stat(function, window_size): #Outputs a custom function that will compute local
+                                            #operation on every chunk of data of given size
+    def rolling_stat(data):
+        stat = np.zeros_like(data)
+        
+        for i in range(len(data)):
+            chunk = data[int(i-window_size):int(i+window_size)]
+        
+            stat[i] = function(chunk)
+        
+        return stat
+    return rolling_stat
+
+def orientation_peaks(ori,
+                      peak_height = 0.1, peak_dist = 30,
+                      mean_window = 3, var_window=10,
+                      smooth_var = False, smooth_var_mean_window = 3):
+
+    #Create a local function that calculates rolling circular mean
+    ori_mean = rolling_stat(stats.circmean, mean_window)
+    mean = ori_mean(np.radians(ori))
+
+    #Variance on a window of 20 if nice for our data.
+    ori_var = rolling_stat(stats.circvar, var_window)
+    data=ori_var(mean)
+
+    if smooth_var:        #Smoothing variance ?
+        rolling_mean = rolling_stat(np.mean, smooth_var_mean_window)
+        data = rolling_mean(data)
+
+    #Look for peaks according to given parameters. Width=1 so output includes width of peaks.
+    peaks = sgl.find_peaks(data, height=peak_height, distance=peak_dist, width=1)
+
+    return peaks
+
+
 #
 ### Storing and accessing data in pickles (.pkl)
 #
 
-def save_ori_pickle(session_name, Dir = "/home/maubry/python/idtrackerai/raw", autocorrec=True, noise_thresh = 0.5): 
+def save_ori_pickle(session_name, Dir = "/home/maubry/python/idtrackerai/raw", autocorrec=True, noise_thresh = 0): 
     #video and numpy files should be in Dir, under the same name.
     st = time.time() #Timing processing
     
@@ -597,7 +713,7 @@ def draw_ori(path_to_vid, flystack, output_name = "draw_ori.avi", shorter=True, 
         if img is None:  #If no more images, break the loop
             cap.release()
             continue
-        elif i > limit:
+        elif shorter and i > limit:
             cap.release()
             continue
 
