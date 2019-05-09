@@ -4,7 +4,7 @@
 
 #All the functions coded below use referencials directly or indirectly inherited from videos. This means point zero (0,0) is the top left corner of the screen. Hence vector from zero to (1,1) goes toward bottom right corner. This means angle would appear to turn clockwise on the video.
 
-#This is not change due to convenience, and will always be left to be changed manually for visualisation of the angle values.
+#This is not changed due to convenience, and will always be left to be changed manually for visualisation of the angle values.
 
 #The convertToTrigo function includes the possiblity to change the sense of a set of angles.
 
@@ -15,18 +15,19 @@
 from scipy import spatial
 from scipy import ndimage
 from scipy import stats
+import scipy.signal as sgl
 from math import *
 import numpy as np
+import numpy.ma as ma
 import copy
 import os
-import cv2
-import operator
-import numpy.ma as ma
-import time
 import pickle as pkl
+import time
+import operator
 import matplotlib.pyplot as plt
 import skvideo.io
-import scipy.signal as sgl
+import cv2
+
 
 
 #
@@ -44,74 +45,7 @@ class fly_data(object):
         self.orientations = data_dict['orientations'][:,identity]
         self.speeds = data_dict['speeds'][:,identity]
         self.old_ori = copy.deepcopy(self.orientations)
-        
-    def ori_correc2(self, write=True): #Adds corrected orientations in fly object.
-        #Should be given a fly object with orientation and direction element.
-        #Will either add a self.corrected element or output corrected orientations.
 
-        
-        
-        ###NOT USEFUL ANYMORE, USE ori_corrc()
-        
-        
-        
-        raws = flip(self.orientations, 90, ref=180)  #Because the reference in the ellipse fitting is a vertical line,
-                                                #and we want it to be trignonometric zero.
-        correc = convertToTrigo(raws, reverse=False) #Put orientations in a 360 degrees format and corrects 
-        
-        
-        #Remove the parts of self.directions that are probably garbage
-        crop_dir = copy.deepcopy(self.directions)
-        dir_var = stats.circvar(crop_dir)
-        crop_dir[dir_var>30] = np.nan
-        
-        #Check which flipping is better :
-        flipped = flip(correc) #Flips orientations
-#         minus = flip(correc, -90)
-#         plus = flip(correc, 90)
-
-        #Calculate correlation for the 4 possibilities
-        correl = dict()
-        correl['flipped'] = ma.corrcoef(ma.masked_invalid(flipped), ma.masked_invalid(crop_dir))[1,0]
-#         correl['minus'] = ma.corrcoef(ma.masked_invalid(minus), ma.masked_invalid(crop_dir))[1,0]
-#         correl['plus'] = ma.corrcoef(ma.masked_invalid(plus), ma.masked_invalid(crop_dir))[1,0]
-        correl['correc'] = ma.corrcoef(ma.masked_invalid(correc), ma.masked_invalid(crop_dir))[1,0]
-
-        #get optimum
-        opti = max(correl.items(), key=operator.itemgetter(1))[0]
-
-        #Outputs better corrected orientations
-        
-        if opti == 'correc':
-            print("orientations have been corrected only")
-            print("Correlation is ", correl['correc'])
-            if write:
-                self.orientations = correc
-            else:
-                return correc
-#         elif opti == 'minus':
-#             print("orientations have been corrected and flipped -90 degrees")
-#             print("Correlation is ", correl['minus'])
-#             if write:
-#               self.orientations = minus
-#             else:
-#                 return minus
-
-#         elif opti == 'plus':
-#             print("orientations have been corrected and flipped +90 degrees")
-#             print("Correlation is ", correl['plus'])
-#             if write:
-#               self.orientations = plus
-#             else:
-#                 return plus
-
-        elif opti == 'flipped':
-            print("Orientations have been corrected and flipped 180 degrees.")
-            print("Correlation is ", correl['flipped'])
-            if write:
-                self.orientations = flipped
-            else:
-                return flipped
             
     def ori_correc(self, chunksize=1000): #Overwrites self.orientations in fly object.
         #New orientations are corrected to match a trigono;etric referencial, and be as close as possible to non-garbage directions
@@ -416,7 +350,7 @@ def angleFromPoints(x,y): #Gets x and y distances between two points, give back 
             angle[i] =360 - angle[i]
     return dist, angle
 
-def landscape(flystack, identity): #Outputs a matrix representing what the fly has been seing.
+def landscape(flystack, identity, FOV=300): #Outputs a matrix representing what the fly has been seeing.
 
     #Import a fly stack and define a focus fly
     focus = flystack[identity]
@@ -442,8 +376,8 @@ def landscape(flystack, identity): #Outputs a matrix representing what the fly h
 
         fly.size = np.ceil(fly.size).astype(int)
         fly.ori_rel = (np.floor(fly.ori_rel).astype(int))
-    FOV = 300
-    vision_lines = np.zeros([focus.length,FOV]) #Only take into acount a FOV of 300degrees
+    
+    vision_lines = np.zeros([focus.length,FOV]) #Create output arraw of 
     
     #Remove flies situated outside FOV
     downlim = (360-FOV)/2
@@ -464,25 +398,11 @@ def landscape(flystack, identity): #Outputs a matrix representing what the fly h
                 if proj_bounds[0] <0:
                     proj_bounds[0] = 0
                     
-                if proj_bounds[1] >=FOV:
-                    proj_bounds[1] = FOV-1
-                vision_lines[frame, range(proj_bounds[0], proj_bounds[1])] = 1
+                if proj_bounds[1] > FOV:
+                    proj_bounds[1] = FOV
+                vision_lines[frame, proj_bounds[0]:proj_bounds[1]] = 1 # put 1's where a fly was for the current frame
 
     return vision_lines
-
-def rolling_var_ori(angles, window_size):  #Outputs local circular variance of the given array, 
-                                            #for a given window size (2 works well) 
-    
-#Is useless, as it can be created using rolling_stat
-
-    var = np.zeros(shape=(len(angles)))
-    x =  window_size #half the size of the window    
-    for i in range(len(angles)):
-        set_chunk = angles[int(i-x):int(i+x)]
-        
-        var[i] = np.degrees(stats.circvar(np.radians(set_chunk)))
-
-    return var
 
 def rolling_stat(function, window_size): #Outputs a custom function that will compute local
                                             #operation on every chunk of data of given size
@@ -555,7 +475,7 @@ def get_ori_pickle(session_name): #.pkl file should be in .
 
 
 #
-### Graphical visualisation
+### Graphical visualisation, plots and videos
 #
 
 def polar_histogram(rel_set, distance=True, #if distance is false, will plot angle instead.
