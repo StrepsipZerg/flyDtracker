@@ -36,7 +36,9 @@ import cv2
 
 class fly_data(object):
     """fly_data gathers the position and orientation of a given fly all along the video."""
+    
     #NB : fly_data is used to store the ouput of the get_ori function. It will usually not be useful to call it directly.
+    
     def __init__(self, data_dict, identity):
         self.length = len(data_dict['orientations'][...,identity])
         self.positions = data_dict['trajectories'][:,identity] #The position of the fly for each frame in pixels of the video.
@@ -47,7 +49,7 @@ class fly_data(object):
         self.old_ori = copy.deepcopy(self.orientations)
 
             
-    def ori_correc(self, chunksize=1000): #Overwrites self.orientations in fly object.
+    def ori_correc(self, chunksize=500): #Overwrites self.orientations in fly object.
         #New orientations are corrected to match a trigono;etric referencial, and be as close as possible to non-garbage directions
         
     
@@ -59,10 +61,11 @@ class fly_data(object):
         #Remove the parts of self.directions that are probably garbage
         crop_dir = copy.deepcopy(self.directions)
     
-        dir_var = rolling_var_ori(self.directions, 2)
+        rolling_var = rolling_stat(stats.circvar, 2)
+        dir_var = rolling_var(self.directions)
         
-        #If variance of direction is greater than 30 for this point it's probably thrashy data.
-        crop_dir[dir_var>30] = np.nan
+        #If variance of direction is greater than 0.1 for this point it's probably thrashy data.
+        crop_dir[dir_var>0.1] = np.nan
         piled_ori = np.zeros_like(correc)
         
         #check which is better for every chunk :
@@ -418,7 +421,7 @@ def rolling_stat(function, window_size): #Outputs a custom function that will co
     return rolling_stat
 
 def orientation_peaks(ori,
-                      peak_height = 0.1, peak_dist = 30,
+                      peak_height, peak_dist = 30,
                       mean_window = 3, var_window=10,
                       smooth_var = False, smooth_var_mean_window = 3):
 
