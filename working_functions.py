@@ -571,10 +571,10 @@ def flyvision(output_name, vision_lines, downlim, uplim, fps='30'): #Should be g
             line_stack = np.vstack([line_stack,line_stack])
             
         col_layer1 = np.zeros_like(line_stack)
-        col_layer1[line_stack == 1] = 220
+        col_layer1[line_stack == 1] = 192
         
         col_layer2 = np.zeros_like(line_stack)
-        col_layer2[line_stack == 1] = 150
+        col_layer2[line_stack == 1] = 205
         
         cols = np.stack([line_stack,col_layer1, col_layer2], axis =-1)
         vision_matrix.append(cols)
